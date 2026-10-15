@@ -43,7 +43,7 @@ def init_chat_model(*args, **kwargs):
             environment["PYTHONPATH"] = str(stub_dir)
             # 该用例只验证导入路径；使用离线假 Key 通过示例的 fail-fast，
             # 模型已由上面的本地 stub 替代，不会访问真实 API。
-            environment["SILICONFLOW_API_KEY"] = "sk-test"
+            environment["OPENAI_API_KEY"] = "sk-test"
             result = subprocess.run(
                 [sys.executable, str(self.example_path)],
                 cwd=cwd,

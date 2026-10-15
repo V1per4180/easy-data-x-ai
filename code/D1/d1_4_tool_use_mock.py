@@ -47,7 +47,6 @@ def run_demo(llm):
         {query_knowledge_base.name: query_knowledge_base},
         max_rounds=5,
         on_tool_result=print_tool_result,
-        legacy_user_message_fallback=True,
     )
     print(f">>> 模型最终回答：\n{response.content}")
     return response
@@ -56,14 +55,16 @@ def run_demo(llm):
 def main(model_factory=init_chat_model) -> int:
     # Key 边界：模型初始化前失败，避免产生任何外部调用。
     try:
-        Config.require_api_key("SILICONFLOW_API_KEY")
+        Config.require_api_key("OPENAI_API_KEY")
     except RuntimeError as exc:
         print(f"❌ {exc}")
         return 1
     llm = model_factory(
-        "deepseek-ai/DeepSeek-V3",
+        "deepseek-flash",
         model_provider="openai",
-        **Config.get_siliconflow_config(),
+        api_key=Config.OPENAI_API_KEY,
+        base_url=Config.OPENAI_BASE_URL,
+        extra_body={"thinking": {"type": "disabled"}},
     )
     run_demo(llm)
     return 0

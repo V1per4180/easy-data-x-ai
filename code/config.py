@@ -51,6 +51,12 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "YOUR_API_KEY")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+    # D2 语义分块：默认本地向量模型，API 模式使用独立凭据，不复用聊天接口。
+    D2_EMBEDDING_PROVIDER = os.getenv("D2_EMBEDDING_PROVIDER", "local")
+    D2_EMBEDDING_API_KEY = os.getenv("D2_EMBEDDING_API_KEY", "")
+    D2_EMBEDDING_BASE_URL = os.getenv("D2_EMBEDDING_BASE_URL", "")
+    D2_EMBEDDING_MODEL = os.getenv("D2_EMBEDDING_MODEL", "")
+
     # D3 RAGAS 评测配置；未单独设置时回退到 SiliconFlow。
     RAGAS_API_KEY = os.getenv("RAGAS_API_KEY", "")
     RAGAS_BASE_URL = os.getenv("RAGAS_BASE_URL", "")

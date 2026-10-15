@@ -1,3 +1,5 @@
+"""混合检索的调用契约测试：确认整体版本要求被传给两个检索支路。"""
+
 import io
 import unittest
 from contextlib import redirect_stdout
@@ -6,6 +8,7 @@ from D2.d2_3_hybrid_search import run_demo
 
 
 class FakeCollection:
+    """记录 hybrid_search 收到的参数，返回空结果，不执行真实检索。"""
     def __init__(self):
         self.hybrid_calls = []
 
@@ -22,7 +25,9 @@ class FakeCollection:
 
 
 class HybridSearchExampleTests(unittest.TestCase):
+    """检查查询条件的构造方式，不评价模型的实际检索质量。"""
     def test_filtered_hybrid_search_filters_both_search_branches(self):
+        """若只限制一个支路，另一个支路可能带入不符合版本要求的候选。"""
         collection = FakeCollection()
 
         with redirect_stdout(io.StringIO()):

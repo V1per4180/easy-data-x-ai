@@ -9,6 +9,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 import pyseekdb
+import config  # noqa: F401 -- 先加载 code/.env，再读取 SEEKDB_* 环境变量。
 
 EMBEDDED_UNAVAILABLE_HINT = (
     "Embedded 模式依赖 pylibseekdb（当前平台未安装或不支持）。"

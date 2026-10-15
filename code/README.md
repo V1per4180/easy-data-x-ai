@@ -65,6 +65,10 @@ Copy-Item code/.env.example code/.env
 只有真实模型示例需要 API Key。编辑 `code/.env`，填写你准备使用的服务：
 
 ```bash
+# D1：DeepSeek 官方 API，使用 deepseek-flash，关闭思考模式
+OPENAI_API_KEY=your_deepseek_api_key_here
+OPENAI_BASE_URL=https://api.deepseek.com
+
 # SiliconFlow API（用于 Hunyuan-MT-7B, DeepSeek-V3 等）
 SILICONFLOW_API_KEY=your_siliconflow_api_key_here
 
@@ -73,6 +77,17 @@ DASHSCOPE_API_KEY=your_dashscope_api_key_here
 ```
 
 `config.py` 会优先读取 `code/.env`；如果该文件不存在，会继续向上查找父目录中的 `.env`（例如仓库根目录 `.env`）。系统环境变量优先级更高，不会被 `.env` 中的同名变量覆盖。
+
+D2 的数据库连接也会加载同一份 `.env`。Windows 使用本地 seekdb Server 时，
+可将下文的 `SEEKDB_*` 参数直接写入 `code/.env`，无需每次在终端设置。
+先运行 `d2_1_ingest.py` 写入，再运行 `d2_2`、`d2_3`、`d2_4` 检索和对比。
+D2 不调用聊天模型；写入和检索沿用 seekdb 默认的本地向量模型。
+
+`d2_5_chunking_compare.py` 的语义分块默认使用本地向量模型
+（`D2_EMBEDDING_PROVIDER=local`），首次运行可能下载模型，不需要 DeepSeek 或硅基流动 Key。
+如需通过 API 生成分块向量，设置 `D2_EMBEDDING_PROVIDER=api`，并填写独立的
+`D2_EMBEDDING_API_KEY`、`D2_EMBEDDING_BASE_URL`、`D2_EMBEDDING_MODEL`。
+这些参数只影响语义分块阶段；`OPENAI_*` 继续用于聊天，不会被用于向量化。
 
 ### 3. 运行示例
 
@@ -102,6 +117,11 @@ python d1_1_base.py
 
 ## 配置说明
 
+`D1/d1_6_agent.py` 会依次输出模型接口、数据库连接、集合创建、向量写入和
+Agent 问答的进度。模型网络请求默认设置 30 秒超时且不自动重试，可通过
+`--request-timeout 60` 调整；每个问题最多执行 12 个 Agent 步骤。
+如果停在第一阶段并提示模型请求超时，应先检查模型服务或网络；此时尚未操作数据库。
+
 所有代码文件都已统一使用 `config.py` 中的配置，无需在每个文件中单独配置 API Key。
 
 - `Config.get_siliconflow_config()` - 获取 SiliconFlow API 配置
@@ -112,9 +132,9 @@ python d1_1_base.py
 | 模块 | 运行条件 |
 | --- | --- |
 | X1 | 纯 Python 标准库，不需要 API Key |
-| D1/d1_1～d1_5 | 需要 `SILICONFLOW_API_KEY`；d1_5 还需要 seekdb |
-| D1/d1_6 | 需要 `DASHSCOPE_API_KEY`，模型为 `qwen-plus`，并需要 seekdb |
-| D2 | 需要 seekdb；语义分块对比还需要 `SILICONFLOW_API_KEY` |
+| D1/d1_1～d1_5 | 需要 `OPENAI_API_KEY` 与 `OPENAI_BASE_URL`（DeepSeek）；d1_5 还需要 seekdb |
+| D1/d1_6 | 需要 `OPENAI_API_KEY` 与 `OPENAI_BASE_URL`（DeepSeek），并需要 seekdb |
+| D2 | 需要 seekdb 和本地向量模型；语义分块可选配置独立的 `D2_EMBEDDING_*` API |
 | D3/D4 | 模型示例需要 `SILICONFLOW_API_KEY`，并需要 seekdb |
 | D3/d3_5 | 60 条确定性离线评测，不需要 API Key 或 seekdb |
 | X2 | Embedded 模式无需外部服务；Server 模式需要先启动 seekdb Server |

@@ -7,6 +7,10 @@ D2 高级 Chunking 策略实现
   3. parent_child_chunk   — 父子分块（小 chunk 检索，大 chunk 返回上下文）
 
 另提供 fixed_overlap_chunk 作为对比基线。
+
+本模块只处理文本和向量，不负责连接数据库。所有 size、overlap、chars
+参数均按字符数计算；Embedding 由调用方传入，便于切换模型和离线测试。
+建议先看 fixed_overlap_chunk，再看另外三种策略，最后看辅助函数。
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from numbers import Real
 
 @dataclass
 class ChildChunk:
-    """子 chunk：用于向量索引的细粒度片段。"""
+    """子块记录：正文用于检索，parent_id 用于追踪所属父块。"""
 
     text: str
     parent_id: str
@@ -28,15 +32,16 @@ class ChildChunk:
 
 @dataclass
 class ParentChunk:
-    """父 chunk：检索命中后返回给 LLM 的上下文块。"""
+    """父块记录：保存较长上下文，以及在本父块内切出的子块列表。"""
 
     parent_id: str
     text: str
+    # 每个父块获得独立列表，避免多个实例意外共用同一个可变默认值。
     children: list[ChildChunk] = field(default_factory=list)
 
 
 def split_sentences(text: str) -> list[str]:
-    """按中英文句号、问号、感叹号切分句子。"""
+    """按中英文结束标点切句并保留标点；这是简化规则，缩写等场景可能误切。"""
     parts = re.split(r"(?<=[。！？.!?])\s*", text.strip())
     return [p.strip() for p in parts if p.strip()]
 
@@ -46,7 +51,13 @@ def fixed_overlap_chunk(
     chunk_size: int = 200,
     overlap: int = 30,
 ) -> list[str]:
-    """固定大小 + 固定 overlap 的基线分块策略。"""
+    """固定长度、固定重叠的分块基线，返回非空文本片段列表。
+
+    用长度为 chunk_size 的窗口依次截取文本，每次前进 chunk_size-overlap。
+    重叠能保留切口附近的信息，但也会增加存储量和重复检索的内容。
+    本策略只看字符位置，不识别句子、标题或主题边界，可能把一句话切开。
+    其他策略可与它比较，以判断额外的复杂度是否带来收益。
+    """
     _validate_fixed_chunk_parameters(chunk_size, overlap)
     chunks: list[str] = []
     start = 0
@@ -68,6 +79,7 @@ def _validate_fixed_chunk_parameters(chunk_size: int, overlap: int) -> None:
 
 
 def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    """计算向量夹角的余弦值；越大表示方向越相近，零向量按 0 处理。"""
     dot = sum(a * b for a, b in zip(vec_a, vec_b))
     norm_a = math.sqrt(sum(a * a for a in vec_a))
     norm_b = math.sqrt(sum(b * b for b in vec_b))
@@ -81,9 +93,15 @@ def _find_semantic_breakpoints(
     percentile: float = 95.0,
 ) -> set[int]:
     """
-    在相邻句相似度序列中，找出「语义跳变」断点。
-    采用 LangChain SemanticChunker 的 percentile 思路：
-    当相似度跌幅超过第 percentile 分位时切分。
+    从相邻句相似度中选出差异较大的句间位置，作为分块断点。
+
+    similarities[i] 对应第 i 句与第 i+1 句；1-similarity 是两句的差异度，
+    并不是“本次相似度减去上次相似度”。高于或等于分位数阈值时，
+    在后一条句子的下标 i+1 处切开。例如断点 2 表示从第 3 句开始新块。
+
+    percentile 越高，通常越倾向于只选择差异较大的边界；相等值可能同时入选。
+    差异度全相同时不强行切分，避免内容相近的句子被任意拆开。
+    本实现借用分位数阈值思路，是教学简化版本。
     """
     if len(similarities) < 2:
         return set()
@@ -97,7 +115,7 @@ def _find_semantic_breakpoints(
     breakpoints: set[int] = set()
     for idx, drop in enumerate(drops):
         if drop >= threshold:
-            breakpoints.add(idx + 1)
+            breakpoints.add(idx + 1)  # 集合保存“下一块从哪一句开始”，而不是相似度下标。
     return breakpoints
 
 
@@ -126,11 +144,17 @@ def semantic_chunk(
     max_chunk_chars: int = 600,
 ) -> list[str]:
     """
-    语义分块：逐句 Embedding，在主题跳变处插入断点。
+    语义分块：切句 → 生成句向量 → 比较相邻句 → 选断点 → 调整块长度。
 
-    embed_fn: 接收字符串列表，返回等长向量列表的函数。
-    参考 NAACL 2025 Findings《Is Semantic Chunking Worth the Computational Cost?》
-    与 LangChain SemanticChunker 的 percentile 阈值实现。
+    embed_fn 接收字符串列表，返回数量相同、顺序对应的向量列表；
+    本函数不关心向量来自本地模型还是 API，也不调用聊天模型。
+    percentile 控制差异度阈值，min_chunk_chars 尽量避免过小片段，
+    max_chunk_chars 限制最大长度。返回值仍是文本列表，而不是向量。
+
+    单句无需比较相邻语义，因此直接进入长度处理；多句才会调用 embed_fn。
+    “语义”来自所选模型的表示能力，断点不保证总是符合人的主题判断。
+    最后的长度处理可能合并语义块或硬切长块；最小长度是软目标，
+    不能为了满足最小长度而突破最大长度限制。
     """
     if (
         isinstance(percentile, bool)
@@ -146,6 +170,7 @@ def semantic_chunk(
     if min_chunk_chars > max_chunk_chars:
         raise ValueError("min_chunk_chars 不能大于 max_chunk_chars")
 
+    # 第一步：确定参与比较的句子单位。
     sentences = split_sentences(text)
     if not sentences:
         return []
@@ -153,14 +178,17 @@ def semantic_chunk(
     if len(sentences) == 1:
         raw_chunks = sentences
     else:
+        # 第二步：批量向量化，随后确认每一句都有且只有一个有效向量。
         embeddings = list(embed_fn(sentences))
         _validate_embeddings(embeddings, len(sentences))
+        # 只比较相邻句，不需要构造所有句子两两之间的相似度矩阵。
         similarities = [
             _cosine_similarity(embeddings[i], embeddings[i + 1])
             for i in range(len(embeddings) - 1)
         ]
         breakpoints = _find_semantic_breakpoints(similarities, percentile)
 
+        # 第三步：按断点把连续句子拼回文本；末尾也要收集，防止遗漏最后一段。
         raw_chunks = []
         start = 0
         for idx in range(1, len(sentences) + 1):
@@ -168,6 +196,7 @@ def semantic_chunk(
                 raw_chunks.append("".join(sentences[start:idx]))
                 start = idx
 
+    # 第四步：把语义边界与长度约束结合起来，得到便于检索的片段。
     return _merge_small_chunks(raw_chunks, min_chunk_chars, max_chunk_chars)
 
 
@@ -198,14 +227,14 @@ def _merge_small_chunks(
     min_chars: int,
     max_chars: int,
 ) -> list[str]:
-    """合并过小的语义块，并保证每个块不超过最大长度。"""
+    """先硬切超长块，再缓冲和合并小块；尾块可能仍短于 min_chars。"""
     bounded_chunks = [
         chunk[start:start + max_chars]
         for chunk in chunks
         for start in range(0, len(chunk), max_chars)
     ]
     merged: list[str] = []
-    buffer = ""
+    buffer = ""  # 暂存还不适合单独输出的小块，等待与后续文本合并。
     for chunk in bounded_chunks:
         candidate = buffer + chunk
         if len(candidate) <= max_chars and len(candidate) < min_chars:
@@ -226,7 +255,7 @@ def _merge_small_chunks(
 
 
 def _detect_boundary_positions(text: str) -> set[int]:
-    """标记段落、标题、表格和代码块等需要加大 overlap 的位置。"""
+    """按 Markdown 规则收集边界的字符偏移；只检测位置，不修改原文。"""
     boundaries: set[int] = set()
     for match in re.finditer(r"\n\n+", text):
         boundaries.add(match.start())
@@ -260,11 +289,15 @@ def dynamic_overlap_chunk(
     max_overlap: int = 60,
 ) -> list[str]:
     """
-    动态 overlap：在段落、标题、表格和代码块边界处加大重叠，
-    同质段落内减小重叠。
+    按结构边界调整重叠长度，返回文本片段列表。
 
-    思路参考 Weaviate《Chunking Strategies for RAG》中的 Adaptive Chunking：
-    根据内容结构动态调整参数，而非全文统一 overlap。
+    窗口长度 chunk_size 保持不变；变化的是每次窗口前进的步长。
+    如果窗口末尾靠近段落、标题、表格或代码块标记，就使用 max_overlap，
+    否则使用 base_overlap。重叠越大，下一块起点离当前起点越近。
+
+    这种方法只依赖文本结构规则，无需向量模型。
+    它通过重复边界附近的文字降低信息被切散的影响，并不会把切口
+    自动移动到标题或完整句子的末尾；也不保证整个表格或代码块不会被切开。
     """
     if chunk_size <= 0:
         raise ValueError("chunk_size 必须大于 0")
@@ -288,6 +321,7 @@ def dynamic_overlap_chunk(
         piece = text[start:end].strip()
         if piece:
             chunks.append(piece)
+        # 观察当前窗口的末尾，而不是起点；下一块会重复这个切口附近的文字。
         overlap = _overlap_near_boundary(end, boundaries, base_overlap, max_overlap)
         stride = max(chunk_size - overlap, 1)
         start += stride
@@ -302,10 +336,15 @@ def parent_child_chunk(
     child_overlap: int = 20,
 ) -> list[ParentChunk]:
     """
-    父子分块：父块保留完整上下文，子块用于精准检索。
+    先切较大的父块，再在每个父块内部切较小的子块。
 
-    检索时只索引子块；命中后通过 parent_id 取回父块文本给 LLM。
-    又称 small-to-big / parent-document retrieval。
+    parent_size 控制父块长度；child_size 和 child_overlap 控制子块的窗口。
+    父块之间在本实现中不重叠，子块之间允许重叠，子块不会跨越所属父块。
+    返回带父子关系的 ParentChunk 列表，暂时不写数据库。
+
+    设计目的：用短文本向量提高定位粒度，命中后附带更长上下文。
+    d2_5 会只索引子块，并把父块正文放在子块 metadata 中供返回。
+    这里的“父块上下文”只保证范围更长，仍是按字符硬切，不保证语义完整。
     """
     _validate_fixed_chunk_parameters(parent_size, 0)
     _validate_fixed_chunk_parameters(child_size, child_overlap)
@@ -314,7 +353,7 @@ def parent_child_chunk(
     parents: list[ParentChunk] = []
 
     for parent_idx, parent_text in enumerate(parent_texts):
-        parent_id = f"parent_{parent_idx}"
+        parent_id = f"parent_{parent_idx}"  # 所有同父子块共享该 ID，用于追踪来源。
         child_texts = fixed_overlap_chunk(parent_text, child_size, child_overlap)
         children = [
             ChildChunk(
@@ -335,7 +374,13 @@ def parent_child_chunk(
 
 
 def flatten_parent_child(parents: list[ParentChunk]) -> tuple[list[str], list[dict]]:
-    """将父子结构展平为 seekdb 可写入的 ids / texts / metadatas。"""
+    """把父子对象展平为等长的 texts、metadatas 两个列表。
+
+    texts 只包含子块正文，作为向量化与检索的内容；相同下标的 metadata
+    记录父块 ID、父块全文和子块序号。d2_5 在写入时另外生成文档 ID。
+    检索命中后可直接从 metadata 取父文，无需再次查询父块集合。
+    这种写法便于教学，但每个子块重复保存父文，会增加存储开销。
+    """
     texts: list[str] = []
     metadatas: list[dict] = []
     for parent in parents:

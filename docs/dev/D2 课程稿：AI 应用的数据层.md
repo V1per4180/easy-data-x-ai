@@ -245,7 +245,7 @@ python D2/d2_5_chunking_compare.py
 3. **语义分块让每个 chunk 更完整**：每个块围绕单一话题，均长更大、块数更少，适合话题切换频繁的手册
 4. **父子 chunk 用子块精准定位、父块补全上下文**：Recall 未必最高，但返回给 LLM 的上下文最完整，适合后续生成环节
 
-语义分块需要配置 `SILICONFLOW_API_KEY`（与课程 Embedding 示例一致）。没有 API Key 时脚本会跳过语义分块，其余三种策略仍可正常运行。
+语义分块脚本默认使用本地向量模型（`D2_EMBEDDING_PROVIDER=local`），无需 API Key，首次运行可能需要下载模型。如需使用远程 Embedding 服务，可在 `code/.env` 中设置 `D2_EMBEDDING_PROVIDER=api`，并填写独立的 `D2_EMBEDDING_API_KEY`、`D2_EMBEDDING_BASE_URL` 和 `D2_EMBEDDING_MODEL`。这些配置不复用 DeepSeek 聊天接口；语义分块失败时，其余三种策略仍可正常运行。
 
 另外请分清两个阶段：`seekdb` 嵌入式模式不可用时，脚本只会把**检索后端**降级为内存词项匹配，不影响语义分块阶段调用硅基流动 Embedding API。也就是说，配置了 API Key 后，即便本地没有可用的 seekdb，语义分块对比仍会执行。
 

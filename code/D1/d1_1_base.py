@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import Config
 from langchain.chat_models import init_chat_model
 
-MODEL_NAME = "tencent/Hunyuan-MT-7B"
+MODEL_NAME = "deepseek-flash"
 
 
 def run_demo(llm):
@@ -23,7 +23,7 @@ def run_demo(llm):
 def main(model_factory=init_chat_model) -> int:
     # Key 边界：模型初始化前失败，避免产生任何外部调用。
     try:
-        Config.require_api_key("SILICONFLOW_API_KEY")
+        Config.require_api_key("OPENAI_API_KEY")
     except RuntimeError as exc:
         print(f"❌ {exc}")
         return 1
@@ -31,7 +31,9 @@ def main(model_factory=init_chat_model) -> int:
     llm = model_factory(
         MODEL_NAME,
         model_provider="openai",
-        **Config.get_siliconflow_config(),
+        api_key=Config.OPENAI_API_KEY,
+        base_url=Config.OPENAI_BASE_URL,
+        extra_body={"thinking": {"type": "disabled"}},
     )
     run_demo(llm)
     return 0

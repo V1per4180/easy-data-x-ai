@@ -67,7 +67,6 @@ def run_demo(llm, collection):
         {search_tool.name: search_tool},
         max_rounds=5,
         on_tool_result=print_tool_result,
-        legacy_user_message_fallback=True,
     )
     print(f">>> 模型最终回答：\n{response.content}")
     return response
@@ -80,15 +79,17 @@ def main(
 ) -> int:
     # Key 边界：缺少 Key 时不创建模型，也不触碰本地数据库。
     try:
-        Config.require_api_key("SILICONFLOW_API_KEY")
+        Config.require_api_key("OPENAI_API_KEY")
     except RuntimeError as exc:
         print(f"❌ {exc}")
         return 1
 
     llm = model_factory(
-        "deepseek-ai/DeepSeek-V3",
+        "deepseek-flash",
         model_provider="openai",
-        **Config.get_siliconflow_config(),
+        api_key=Config.OPENAI_API_KEY,
+        base_url=Config.OPENAI_BASE_URL,
+        extra_body={"thinking": {"type": "disabled"}},
     )
     # 路径边界：默认锚定 D1 目录，测试和 CLI 可显式覆盖。
     resolved_path = Path(db_path or DEFAULT_DB_PATH).expanduser().resolve()

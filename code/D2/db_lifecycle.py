@@ -1,5 +1,8 @@
+"""D2 的连接清理辅助函数；关闭连接不会删除集合或文档。"""
+
+
 def close_database(database):
-    """兼容 close() 和上下文管理协议两种 pyseekdb 客户端。"""
+    """优先调用 close()，否则按上下文管理协议调用 __exit__()。"""
     close = getattr(database, "close", None)
     if callable(close):
         close()
